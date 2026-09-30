@@ -47,7 +47,16 @@ object Minifier {
                     if (open != expected) throw MinifyException("unbalanced '$ch' at index $i")
                     sb.append(ch)
                 }
-                ch.isWhitespace() -> Unit
+                ch.isWhitespace() -> {
+                    // "[1 2]" must not silently become "[12]".
+                    if (sb.isNotEmpty() && isJsonScalarChar(sb.last())) {
+                        var k = i + 1
+                        while (k < source.length && source[k].isWhitespace()) k++
+                        if (k < source.length && isJsonScalarChar(source[k])) {
+                            throw MinifyException("missing ',' or ':' before index $k")
+                        }
+                    }
+                }
                 else -> sb.append(ch)
             }
             i++
@@ -64,8 +73,10 @@ object Minifier {
         val sb = StringBuilder(source.length)
         var i = 0
         var pendingSpace = false
-        fun flushSpace(next: Char) {
-            if (pendingSpace && sb.isNotEmpty() && sb.last() !in CSS_TIGHT && next !in CSS_TIGHT) sb.append(' ')
+        fun flushSpace(next: Char, at: Int) {
+            val keep = pendingSpace && sb.isNotEmpty() && sb.last() !in CSS_TIGHT &&
+                (next !in CSS_TIGHT || (next == ':' && inSelector(source, at)))
+            if (keep) sb.append(' ')
             pendingSpace = false
         }
         while (i < source.length) {
@@ -78,7 +89,7 @@ object Minifier {
                     pendingSpace = true
                 }
                 ch == '"' || ch == '\'' -> {
-                    flushSpace(ch)
+                    flushSpace(ch, i)
                     val end = endOfString(source, i, ch)
                     sb.append(source, i, end + 1)
                     i = end
@@ -89,7 +100,7 @@ object Minifier {
                     if (sb.isNotEmpty() && sb.last() == ';') sb.setLength(sb.length - 1)
                     sb.append(ch)
                 }
-                else -> { flushSpace(ch); sb.append(ch) }
+                else -> { flushSpace(ch, i); sb.append(ch) }
             }
             i++
         }
@@ -98,12 +109,48 @@ object Minifier {
 
     /**
      * Conservative JavaScript shrink: trims each line and drops blank lines.
-     * It never rewrites tokens, so it cannot change program meaning.
+     * It never rewrites tokens. Lines inside a multi-line template literal
+     * (`...`) are kept verbatim because their whitespace is part of the string.
+     * Backticks inside quotes or comments are not recognised (heuristic).
      */
-    fun stripLineWhitespace(source: String): String =
-        source.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
+    fun stripLineWhitespace(source: String): String {
+        val out = mutableListOf<String>()
+        var inTemplate = false
+        for (line in source.lines()) {
+            val startsInside = inTemplate
+            var escaped = false
+            for (c in line) {
+                when {
+                    escaped -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '`' -> inTemplate = !inTemplate
+                }
+            }
+            var kept = if (startsInside) line else line.trimStart()
+            if (!inTemplate) kept = kept.trimEnd()
+            if (kept.isNotEmpty() || startsInside) out += kept
+        }
+        return out.joinToString("\n")
+    }
 
     private val CSS_TIGHT = setOf('{', '}', ':', ';', ',', '>')
+
+    private fun isJsonScalarChar(c: Char) = c.isLetterOrDigit() || c == '.' || c == '-' || c == '+' || c == '"'
+
+    /**
+     * True when the ':' at [at] belongs to a selector (`div :hover {`), where the
+     * space before it is a descendant combinator and must be kept. A selector
+     * reaches `{` before any `;` or `}`; a declaration does not.
+     */
+    private fun inSelector(source: String, at: Int): Boolean {
+        for (j in at until source.length) {
+            when (source[j]) {
+                '{' -> return true
+                ';', '}' -> return false
+            }
+        }
+        return false
+    }
 
     private fun endOfString(source: String, start: Int, quote: Char): Int {
         var j = start + 1
