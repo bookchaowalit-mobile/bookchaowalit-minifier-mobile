@@ -33,3 +33,8 @@ Compose UI is still a placeholder and the Android build is unverified locally.
 - Fixed JS whitespace mode: lines inside multi-line template literals are kept verbatim (their whitespace is string content).
 - 7 more edge-case tests (13 total); verified with `./gradlew -p core test --offline` (3 of them fail on the old code).
 - Still not verified locally: the Compose `app/` (no Android SDK; dl.google.com is blocked here).
+
+## Done in this pass (pass 3)
+
+- Fixed JSON: any Kotlin `isWhitespace()` character (NBSP, U+2028, ideographic space, U+001C-U+001F) was silently dropped between tokens, turning invalid JSON into "valid" output; zero-width spaces were passed through. Only RFC 8259 whitespace is now skipped, other invisible/control characters raise `MinifyException`, and a leading BOM is tolerated.
+- 2 regression tests (15 total), verified with `./gradlew -p core test --offline`.

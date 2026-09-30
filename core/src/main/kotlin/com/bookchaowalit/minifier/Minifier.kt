@@ -31,7 +31,8 @@ object Minifier {
     fun minifyJson(source: String): String {
         val sb = StringBuilder(source.length)
         val stack = ArrayDeque<Char>()
-        var i = 0
+        // A leading byte-order mark is an encoding artefact, not content.
+        var i = if (source.startsWith('\uFEFF')) 1 else 0
         while (i < source.length) {
             val ch = source[i]
             when {
@@ -47,16 +48,20 @@ object Minifier {
                     if (open != expected) throw MinifyException("unbalanced '$ch' at index $i")
                     sb.append(ch)
                 }
-                ch.isWhitespace() -> {
+                ch in JSON_WHITESPACE -> {
                     // "[1 2]" must not silently become "[12]".
                     if (sb.isNotEmpty() && isJsonScalarChar(sb.last())) {
                         var k = i + 1
-                        while (k < source.length && source[k].isWhitespace()) k++
+                        while (k < source.length && source[k] in JSON_WHITESPACE) k++
                         if (k < source.length && isJsonScalarChar(source[k])) {
                             throw MinifyException("missing ',' or ':' before index $k")
                         }
                     }
                 }
+                // NBSP, U+2028, U+001F, zero-width spaces ... are not JSON whitespace;
+                // dropping them silently would "repair" invalid input.
+                ch.isWhitespace() || ch.isISOControl() || ch.category == CharCategory.FORMAT ->
+                    throw MinifyException("invalid character U+${ch.code.toString(16).uppercase().padStart(4, '0')} at index $i")
                 else -> sb.append(ch)
             }
             i++
@@ -132,6 +137,9 @@ object Minifier {
         }
         return out.joinToString("\n")
     }
+
+    /** The only whitespace RFC 8259 allows between JSON tokens. */
+    private val JSON_WHITESPACE = setOf(' ', '\t', '\n', '\r')
 
     private val CSS_TIGHT = setOf('{', '}', ':', ';', ',', '>')
 
