@@ -13,4 +13,7 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "Minifier"
+// Pure-Kotlin domain logic lives in its own build so it can be built and
+// tested without the Android SDK: ./gradlew -p core build
+includeBuild("core")
 include(":app")
